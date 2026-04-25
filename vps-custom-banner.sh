@@ -112,6 +112,92 @@ get_pkg_version() {
   return 1
 }
 
+extract_version_line() {
+  local raw="$1"
+  local first
+  first="$(printf "%s" "$raw" | tr -d '\r' | sed -n '1p' | sed 's/[[:space:]]\+$//')"
+  # Ignore noisy non-version output (e.g. banners/help text without numbers).
+  if ! printf "%s" "$first" | grep -Eq '[0-9]'; then
+    return 1
+  fi
+  printf "%s" "$first"
+}
+
+run_version_cmd() {
+  # Usage: run_version_cmd <command...>
+  if has_cmd timeout; then
+    timeout 1 "$@" 2>&1
+  else
+    "$@" 2>&1
+  fi
+}
+
+get_tool_version() {
+  local name="$1"
+  local bin="$2"
+  local pkg="$3"
+  local out=""
+  local parsed=""
+
+  case "$name" in
+    xray) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    v2ray) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    xrayr) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    sing-box) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    nginx) out="$(run_version_cmd "$bin" -v | sed -n '1p')" ;;
+    docker) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    3x-ui|x-ui) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    marzban) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    hiddify) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    s-ui) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    remnawave) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    telemt|telemt-panel) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    shadowsocks) out="$(run_version_cmd "$bin" -h | grep -m1 -E '([Vv]ersion|[0-9]+\\.[0-9]+)')" ;;
+    shadowsocks-rust|shadowsocks-go) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    trojan|trojan-go) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    hysteria|hysteria2) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    tuic) out="$(run_version_cmd "$bin" -V | sed -n '1p')" ;;
+    naiveproxy) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    wireguard) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    wg-easy) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    amneziaWG) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    openvpn) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    ocserv) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    strongswan) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    softether) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    pptpd) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    tailscale) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    headscale) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    squid) out="$(run_version_cmd "$bin" -v | sed -n '1p')" ;;
+    tinyproxy) out="$(run_version_cmd "$bin" -v | sed -n '1p')" ;;
+    privoxy) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    apache) out="$(run_version_cmd "$bin" -v | sed -n '1p')" ;;
+    caddy) out="$(run_version_cmd "$bin" version | sed -n '1p')" ;;
+    fail2ban) out="$(run_version_cmd "$bin" --version | sed -n '1p')" ;;
+    *) ;;
+  esac
+
+  if [ -z "$out" ] && [ -n "$bin" ] && has_cmd "$bin"; then
+    out="$(run_version_cmd "$bin" --version | sed -n '1p')"
+  fi
+  if [ -z "$out" ] && [ -n "$bin" ] && has_cmd "$bin"; then
+    out="$(run_version_cmd "$bin" -v | sed -n '1p')"
+  fi
+  if [ -z "$out" ] && [ -n "$bin" ] && has_cmd "$bin"; then
+    out="$(run_version_cmd "$bin" version | sed -n '1p')"
+  fi
+  if [ -z "$out" ] && [ -n "$pkg" ]; then
+    out="$(get_pkg_version "$pkg" 2>/dev/null || true)"
+  fi
+
+  parsed="$(extract_version_line "$out" 2>/dev/null || true)"
+  if [ -n "$parsed" ]; then
+    printf "%s" "$parsed"
+  else
+    printf "%s" "-"
+  fi
+}
+
 # ===== Resource block =====
 CPU_LOAD="$(awk '{print $1", "$2", "$3}' /proc/loadavg 2>/dev/null || echo 'N/A')"
 PROCS="$(ps -e --no-headers 2>/dev/null | wc -l || echo 'N/A')"
@@ -255,14 +341,8 @@ for item in "${CANDIDATES[@]}"; do
     stat_color="$red"
   fi
 
-  # version: package -> binary --version fallback
-  version="-"
-  if [ -n "$bin_lc" ] && has_cmd "$bin_lc"; then
-    version="$($bin_lc --version 2>/dev/null | head -n1 | tr -s ' ')"
-  elif [ -n "$pkg" ]; then
-    version="$(get_pkg_version "$pkg" 2>/dev/null || true)"
-  fi
-  [ -z "$version" ] && version="-"
+  # version: service-specific command -> generic -> package fallback
+  version="$(get_tool_version "$name" "$bin_lc" "$pkg" | tr -s ' ')"
 
   INSTALLED_ROWS+=("$name|$status|$version|$icon|$stat_color|$svc_lc")
   if [ -n "$svc_lc" ] && [ -z "${SEEN_SERVICES[$svc_lc]+x}" ]; then
