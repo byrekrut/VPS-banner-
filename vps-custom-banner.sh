@@ -74,11 +74,12 @@ append_line ""
 
 # ===== Helpers =====
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
+can_exec() { [ -n "${1:-}" ] && { [ -x "$1" ] || has_cmd "$1"; }; }
 
 is_proc_running() {
   local proc="$1"
   [ -z "$proc" ] && return 1
-  [[ "$PROC_SNAPSHOT" == *"$proc"* ]]
+  grep -qiE "(^|[[:space:]/])${proc}([[:space:]]|$)" <<< "$PROC_SNAPSHOT"
 }
 
 is_service_running() {
@@ -114,13 +115,16 @@ get_pkg_version() {
 
 extract_version_line() {
   local raw="$1"
-  local first
-  first="$(printf "%s" "$raw" | tr -d '\r' | sed -n '1p' | sed 's/[[:space:]]\+$//')"
-  # Ignore noisy non-version output (e.g. banners/help text without numbers).
-  if ! printf "%s" "$first" | grep -Eq '[0-9]'; then
+  local picked
+  picked="$(printf "%s" "$raw" | tr -d '\r' | sed 's/[[:space:]]\+$//' | grep -m1 -E 'v?[0-9]+(\.[0-9]+){2,4}')"
+  if [ -z "$picked" ]; then
+    picked="$(printf "%s" "$raw" | tr -d '\r' | sed 's/[[:space:]]\+$//' | grep -m1 -Ei 'version.*[0-9]+\.[0-9]+')"
+  fi
+  # Ignore noisy non-version output.
+  if [ -z "$picked" ] || ! printf "%s" "$picked" | grep -Eq '[0-9]'; then
     return 1
   fi
-  printf "%s" "$first"
+  printf "%s" "$picked"
 }
 
 run_version_cmd() {
@@ -130,6 +134,177 @@ run_version_cmd() {
   else
     "$@" 2>&1
   fi
+}
+
+deep_version_fallback() {
+  local name="$1"
+  local bin="$2"
+  local svc="$3"
+  local v=""
+  local d=""
+  local db=""
+
+  # x-ui / 3x-ui often keep values in sqlite settings DB.
+  if [[ "$name" == "x-ui" || "$name" == "3x-ui" ]]; then
+    if can_exec "$bin"; then
+      v="$(run_version_cmd "$bin" setting -show true | grep -m1 -Ei 'version[^0-9]*[0-9]+\.[0-9]+(\.[0-9]+)?' || true)"
+      if [ -n "$v" ]; then
+        v="$(printf "%s" "$v" | grep -Eo 'v?[0-9]+(\.[0-9]+){1,3}' | head -n1)"
+        [ -n "$v" ] && { printf "%s" "$v"; return 0; }
+      fi
+    fi
+    if has_cmd sqlite3; then
+      for db in /etc/x-ui/x-ui.db /usr/local/x-ui/x-ui.db; do
+        if [ -f "$db" ]; then
+          v="$(sqlite3 "$db" "select value from settings where key in ('xuiVersion','version','xrayVersion','panelVersion','webPanelVersion','x_ui_version','XrayVersion') and value!='' limit 1;" 2>/dev/null | sed -n '1p')"
+          [ -n "$v" ] && { printf "%s" "$v"; return 0; }
+        fi
+      done
+    fi
+  fi
+
+  # Try nearby version files.
+  if [ -n "$bin" ]; then
+    d="$(dirname "$bin" 2>/dev/null || true)"
+    for f in "$d/VERSION" "$d/version" "$d/.version" "$d/../VERSION" "$d/../version"; do
+      if [ -r "$f" ]; then
+        v="$(sed -n '1p' "$f" | tr -d '\r')"
+        if printf "%s" "$v" | grep -Eq '[0-9]+\.[0-9]+'; then
+          printf "%s" "$v"
+          return 0
+        fi
+      fi
+    done
+  fi
+
+  # Last resort: parse semantic version from binary strings.
+  if has_cmd strings && [ -r "$bin" ]; then
+    v="$(strings "$bin" 2>/dev/null | grep -m1 -Eo 'v?[0-9]+(\.[0-9]+){2,4}')"
+    if [ -n "$v" ]; then
+      printf "%s" "$v"
+      return 0
+    fi
+  fi
+
+  # Binary byte-scan fallback for stripped executables.
+  if [ -r "$bin" ]; then
+    v="$(grep -aoE 'v?[0-9]+\.[0-9]+\.[0-9]+' "$bin" 2>/dev/null | head -n1 || true)"
+    if [ -n "$v" ]; then
+      printf "%s" "$v"
+      return 0
+    fi
+  fi
+
+  # systemd status line can sometimes expose app version.
+  if has_cmd systemctl && [ -n "$svc" ]; then
+    v="$(systemctl status "$svc" --no-pager 2>/dev/null \
+      | grep -iE 'version|v[0-9]' \
+      | grep -m1 -Eo 'v?[0-9]+(\.[0-9]+){2,4}' || true)"
+    if [ -n "$v" ]; then
+      printf "%s" "$v"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+resolve_bin_path() {
+  local name="$1"
+  local bin="$2"
+  local proc="$3"
+  local svc="$4"
+  local candidate=""
+  local p=""
+
+  if [ -n "$bin" ] && has_cmd "$bin"; then
+    command -v "$bin"
+    return 0
+  fi
+
+  for p in \
+    "/usr/local/bin/$bin" "/usr/bin/$bin" "/bin/$bin" \
+    "/usr/local/sbin/$bin" "/usr/sbin/$bin" \
+    "/usr/local/bin/$proc" "/usr/bin/$proc" "/bin/$proc"; do
+    if [ -n "$p" ] && [ -x "$p" ]; then
+      printf "%s" "$p"
+      return 0
+    fi
+  done
+
+  case "$name" in
+    3x-ui|x-ui)
+      for p in "/usr/local/x-ui/x-ui" "/opt/x-ui/x-ui"; do
+        [ -x "$p" ] && { printf "%s" "$p"; return 0; }
+      done
+      ;;
+    xray)
+      for p in "/usr/local/bin/xray" "/usr/bin/xray" "/usr/local/x-ui/bin/xray" /usr/local/x-ui/bin/xray*; do
+        [ -x "$p" ] && { printf "%s" "$p"; return 0; }
+      done
+      ;;
+    sing-box)
+      for p in "/usr/local/bin/sing-box" "/usr/bin/sing-box"; do
+        [ -x "$p" ] && { printf "%s" "$p"; return 0; }
+      done
+      ;;
+  esac
+
+  # Try to resolve executable from running process command line.
+  if has_cmd pgrep && [ -n "$proc" ]; then
+    local p_line p_pid p_cmd p_exec p_exec_abs
+    p_line="$(pgrep -af "$proc" 2>/dev/null | head -n1 || true)"
+    p_pid="${p_line%% *}"
+    p_cmd="${p_line#* }"
+    p_exec="${p_cmd%% *}"
+    if [ -n "$p_exec" ] && [ -x "$p_exec" ]; then
+      printf "%s" "$p_exec"
+      return 0
+    fi
+    # Resolve relative executable path using process CWD.
+    if [ -n "$p_exec" ] && [ -n "$p_pid" ] && [ -d "/proc/$p_pid/cwd" ]; then
+      p_exec_abs="$(readlink -f "/proc/$p_pid/cwd/$p_exec" 2>/dev/null || true)"
+      if [ -n "$p_exec_abs" ] && [ -x "$p_exec_abs" ]; then
+        printf "%s" "$p_exec_abs"
+        return 0
+      fi
+    fi
+    # Last-resort for xray custom names (e.g. xray-linux-amd64).
+    if [ "$name" = "xray" ] && [ -n "$p_exec" ]; then
+      p_exec_abs="$(readlink -f "$p_exec" 2>/dev/null || true)"
+      if [ -n "$p_exec_abs" ] && [ -x "$p_exec_abs" ]; then
+        printf "%s" "$p_exec_abs"
+        return 0
+      fi
+    fi
+    if [ -n "$p_exec" ] && [ -n "$p_pid" ] && [ -d "/proc/$p_pid/cwd/bin" ] && [ "$name" = "xray" ]; then
+      p_exec_abs="$(find "/proc/$p_pid/cwd/bin" -maxdepth 1 -type f -name 'xray*' 2>/dev/null | head -n1 || true)"
+      if [ -n "$p_exec_abs" ]; then
+        p_exec_abs="$(readlink -f "$p_exec_abs" 2>/dev/null || true)"
+      fi
+      if [ -n "$p_exec_abs" ] && [ -x "$p_exec_abs" ]; then
+        printf "%s" "$p_exec_abs"
+        return 0
+      fi
+    fi
+    if [ -n "$p_exec" ] && [ -x "/usr/local/x-ui/$p_exec" ]; then
+      printf "%s" "/usr/local/x-ui/$p_exec"
+      return 0
+    fi
+  fi
+
+  # Try to resolve executable from systemd unit ExecStart.
+  if has_cmd systemctl && [ -n "$svc" ]; then
+    local s_line s_exec
+    s_line="$(systemctl show -p ExecStart --value "$svc" 2>/dev/null | sed -n '1p' || true)"
+    s_exec="$(printf "%s" "$s_line" | sed -n 's/.*path=\\([^ ;]*\\).*/\\1/p' | sed -n '1p')"
+    if [ -n "$s_exec" ] && [ -x "$s_exec" ]; then
+      printf "%s" "$s_exec"
+      return 0
+    fi
+  fi
+
+  printf "%s" "$bin"
 }
 
 get_tool_version() {
@@ -177,13 +352,13 @@ get_tool_version() {
     *) ;;
   esac
 
-  if [ -z "$out" ] && [ -n "$bin" ] && has_cmd "$bin"; then
+  if [ -z "$out" ] && can_exec "$bin"; then
     out="$(run_version_cmd "$bin" --version | sed -n '1p')"
   fi
-  if [ -z "$out" ] && [ -n "$bin" ] && has_cmd "$bin"; then
+  if [ -z "$out" ] && can_exec "$bin"; then
     out="$(run_version_cmd "$bin" -v | sed -n '1p')"
   fi
-  if [ -z "$out" ] && [ -n "$bin" ] && has_cmd "$bin"; then
+  if [ -z "$out" ] && can_exec "$bin"; then
     out="$(run_version_cmd "$bin" version | sed -n '1p')"
   fi
   if [ -z "$out" ] && [ -n "$pkg" ]; then
@@ -324,11 +499,13 @@ for item in "${CANDIDATES[@]}"; do
   svc_lc="$svc"
   bin_lc="$bin"
 
-  if [ -n "$bin_lc" ] && has_cmd "$bin_lc"; then detected=1; fi
+  if can_exec "$bin_lc"; then detected=1; fi
   if [ "$detected" -eq 0 ] && is_proc_running "$proc"; then detected=1; fi
   if [ "$detected" -eq 0 ] && is_service_running "$svc_lc"; then detected=1; fi
 
   [ "$detected" -eq 0 ] && continue
+
+  bin_path="$(resolve_bin_path "$name" "$bin_lc" "$proc_lc" "$svc_lc")"
 
   # status
   if is_service_running "$svc_lc" || is_proc_running "$proc_lc"; then
@@ -341,10 +518,7 @@ for item in "${CANDIDATES[@]}"; do
     stat_color="$red"
   fi
 
-  # version: service-specific command -> generic -> package fallback
-  version="$(get_tool_version "$name" "$bin_lc" "$pkg" | tr -s ' ')"
-
-  INSTALLED_ROWS+=("$name|$status|$version|$icon|$stat_color|$svc_lc")
+  INSTALLED_ROWS+=("$name|$status|$icon|$stat_color|$svc_lc")
   if [ -n "$svc_lc" ] && [ -z "${SEEN_SERVICES[$svc_lc]+x}" ]; then
     RESTARTABLE_SERVICES+=("$svc_lc")
     SEEN_SERVICES["$svc_lc"]=1
@@ -360,16 +534,16 @@ LEFT=$(printf "%${SIDE}s" "" | tr " " "─")
 RIGHT=$(printf "%$((WIDTH - LEN - SIDE - 2))s" "" | tr " " "─")
 append_line "$(printf "${line}%s %s %s${reset}" "$LEFT" "$TITLE" "$RIGHT")"
 append_line ""
-append_line "$(printf " ${orange}%-22s %-10s %s${reset}" "SERVICE" "STATUS" "VERSION")"
+append_line "$(printf " ${orange}%-22s %-10s${reset}" "SERVICE" "STATUS")"
 
 if [ "${#INSTALLED_ROWS[@]}" -eq 0 ]; then
   append_line "$(printf " ${yellow}%s${reset}" "No known services from the VPS list were detected.")"
 else
   for row in "${INSTALLED_ROWS[@]}"; do
-    IFS='|' read -r name status version icon stat_color svc <<< "$row"
+    IFS='|' read -r name status icon stat_color svc <<< "$row"
     next_color
-    append_line "$(printf "%b%b %b%-22s%b %b%-10s%b ${blue}%s${reset}" \
-      "$ROW_COLOR" "$icon" "$ROW_COLOR" "$name" "$reset" "$stat_color" "$status" "$reset" "$version")"
+    append_line "$(printf "%b%b %b%-22s%b %b%-10s%b" \
+      "$ROW_COLOR" "$icon" "$ROW_COLOR" "$name" "$reset" "$stat_color" "$status" "$reset")"
   done
 fi
 
