@@ -1,32 +1,28 @@
-# 📜 VPS Banner Installer
+# 📜 VPS Custom Banner Installer
 
-Безопасный установщик баннера для VPS, который добавляет сообщение при входе через `/etc/profile.d`, **не изменяя `/etc/profile`**.
+Установщик кастомного баннера для VPS (Ubuntu-friendly), который:
+
+- скачивает баннер из GitHub  
+- сохраняет его как отдельный скрипт  
+- безопасно подключает через `/etc/profile.d`  
+- **не изменяет `/etc/profile`**
 
 ---
 
 ## ✨ Особенности
 
-- Не изменяет `/etc/profile`
-- Использует `/etc/profile.d`
-- Безопасное обновление через маркеры
-- Не перезаписывает чужие файлы
-- Поддержка `--force`
-- Показывает баннер только в интерактивных сессиях
+- Безопасная установка без правки системных файлов
+- Баннер хранится отдельно (`/usr/local/lib`)
+- Автоматическая загрузка с GitHub
+- Работает только в интерактивных сессиях
+- Поддержка кастомных путей и источника
 
 ---
 
 ## 🚀 Установка (одной командой)
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/your-repo/install_vps_banner.sh)
-```
-
----
-
-## 🔥 Переустановка
-
-```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/your-repo/install_vps_banner.sh) --force
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/byrekrut/VPS-banner-/main/install_vps_banner.sh)
 ```
 
 ---
@@ -34,14 +30,19 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/your-repo/install_vps_b
 ## ⚙️ Использование
 
 ```bash
-install_vps_banner.sh [--file PATH] [--force]
+install_vps_banner.sh [--source URL] [--profiled-file PATH] [--banner-file PATH]
 ```
 
 ### Параметры
 
-- `--file` — путь к файлу в `/etc/profile.d/`  
-  (по умолчанию: `/etc/profile.d/99-vps-banner.sh`)
-- `--force` — принудительно перезаписать баннер
+- `--source` — URL баннера  
+  (по умолчанию: `vps-custom-banner.sh` из репозитория)
+
+- `--profiled-file` — файл в `/etc/profile.d/`  
+  (по умолчанию: `/etc/profile.d/vps-custom-banner.sh`)
+
+- `--banner-file` — куда сохранить баннер  
+  (по умолчанию: `/usr/local/lib/vps-custom-banner.sh`)
 
 ---
 
@@ -53,17 +54,46 @@ install_vps_banner.sh [--file PATH] [--force]
 sudo ./install_vps_banner.sh
 ```
 
-### Установка в другой файл
+---
+
+### Использовать свой баннер
 
 ```bash
-sudo ./install_vps_banner.sh --file /etc/profile.d/custom-banner.sh
+sudo ./install_vps_banner.sh --source https://example.com/banner.sh
 ```
 
-### Переустановка
+---
+
+### Изменить пути установки
 
 ```bash
-sudo ./install_vps_banner.sh --force
+sudo ./install_vps_banner.sh \
+  --banner-file /opt/banner.sh \
+  --profiled-file /etc/profile.d/banner.sh
 ```
+
+---
+
+## 🖥 Как это работает
+
+1. Скачивает баннер:
+```
+https://github.com/byrekrut/VPS-banner-
+```
+
+2. Сохраняет его в:
+```
+/usr/local/lib/vps-custom-banner.sh
+```
+
+3. Создаёт launcher:
+```
+/etc/profile.d/vps-custom-banner.sh
+```
+
+4. При входе в систему:
+- проверяется интерактивный shell  
+- запускается баннер через `bash`
 
 ---
 
@@ -71,67 +101,35 @@ sudo ./install_vps_banner.sh --force
 
 Скрипт:
 
-- Требует запуск от root
-- Работает только с `/etc/profile.d/*.sh`
-- Не перезапишет файл без своих маркеров
-- Удаляет только свой блок:
-
-```
-# >>> vps-banner >>>
-...
-# <<< vps-banner <<<
-```
-
----
-
-## 🖥 Как это работает
-
-Создаётся файл:
-
-```
-/etc/profile.d/99-vps-banner.sh
-```
-
-Содержимое:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   Welcome to your VPS
-   Unauthorized access is prohibited.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-Баннер отображается только при интерактивном входе (SSH / терминал).
+- Требует root
+- Не изменяет `/etc/profile`
+- Работает только через `/etc/profile.d`
+- Очищает баннер от потенциально опасных строк (`set -u`, shebang)
 
 ---
 
 ## 🧹 Удаление
 
 ```bash
-sudo rm /etc/profile.d/99-vps-banner.sh
+sudo rm /etc/profile.d/vps-custom-banner.sh
+sudo rm /usr/local/lib/vps-custom-banner.sh
 ```
 
 ---
 
 ## 🛠 Кастомизация
 
-```bash
-sudo nano /etc/profile.d/99-vps-banner.sh
-```
-
-Измени текст внутри:
+Отредактируй файл:
 
 ```bash
-cat <<'EOF_BANNER'
-...
-EOF_BANNER
+sudo nano /usr/local/lib/vps-custom-banner.sh
 ```
 
 ---
 
 ## ⚠️ Важно
 
-Баннер не показывается в:
+Баннер НЕ показывается в:
 
 - cron
 - скриптах
