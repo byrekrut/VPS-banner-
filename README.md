@@ -22,7 +22,7 @@
 ## 🚀 Установка (одной командой)
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/byrekrut/VPS-banner-/main/install_vps_banner.sh)
+curl -fsSL https://raw.githubusercontent.com/byrekrut/VPS-banner-/main/install_vps_banner.sh | sudo bash
 ```
 
 ---
