@@ -1,6 +1,44 @@
 #!/usr/bin/env bash
 set -u
 
+SCRIPT_BASENAME="vps-custom-banner"
+INSTALL_PATH="/usr/local/bin/${SCRIPT_BASENAME}"
+PROFILE_SNIPPET="/etc/profile.d/${SCRIPT_BASENAME}-menu.sh"
+MODE="${1:-}"
+
+# Install/update mode:
+#   ./vps-custom-banner.sh --install
+# This will replace previous installation (if exists) and register `menu` alias.
+if [ "$MODE" = "--install" ]; then
+  SRC_PATH="$(readlink -f "$0")"
+  if [ ! -f "$SRC_PATH" ]; then
+    echo "Не удалось найти файл скрипта для установки."
+    exit 1
+  fi
+
+  if [ -f "$INSTALL_PATH" ]; then
+    sudo rm -f "$INSTALL_PATH"
+    echo "Старая версия удалена: $INSTALL_PATH"
+  fi
+
+  sudo install -m 0755 "$SRC_PATH" "$INSTALL_PATH"
+
+  TMP_SNIPPET="$(mktemp)"
+  cat > "$TMP_SNIPPET" <<EOF_SNIPPET
+# ${SCRIPT_BASENAME} menu alias
+if command -v ${SCRIPT_BASENAME} >/dev/null 2>&1; then
+  alias menu='${SCRIPT_BASENAME} --menu'
+fi
+EOF_SNIPPET
+  sudo mv "$TMP_SNIPPET" "$PROFILE_SNIPPET"
+  sudo chmod 0644 "$PROFILE_SNIPPET"
+
+  echo "Установлено: $INSTALL_PATH"
+  echo "Добавлен alias 'menu' через $PROFILE_SNIPPET"
+  echo "Перезайдите по SSH или выполните: source $PROFILE_SNIPPET"
+  exit 0
+fi
+
 # VPS SSH banner with auto-detection of popular proxy/VPN tools and panels.
 # Compatible with Debian/Ubuntu/CentOS/Alpine systems with systemd or SysV init.
 
@@ -39,18 +77,14 @@ has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 is_proc_running() {
   local proc="$1"
-  pgrep -x "$proc" >/dev/null 2>&1 || pgrep -f "$proc" >/dev/null 2>&1
+  [ -z "$proc" ] && return 1
+  [[ "$PROC_SNAPSHOT" == *"$proc"* ]]
 }
 
 is_service_running() {
   local svc="$1"
-  if has_cmd systemctl; then
-    systemctl is-active --quiet "$svc" 2>/dev/null
-  elif has_cmd service; then
-    service "$svc" status >/dev/null 2>&1
-  else
-    return 1
-  fi
+  [ -z "$svc" ] && return 1
+  [ -n "${ACTIVE_SERVICE_SET[$svc]+x}" ]
 }
 
 restart_service() {
@@ -109,41 +143,109 @@ next_color
 append_line "$(printf "%b %-12s%b ${text}%s${reset}" "$ROW_COLOR" "Processes:" "$reset" "$PROCS")"
 append_line ""
 
+# ===== Fast snapshots for detection (avoid many slow systemctl/pgrep calls) =====
+PROC_SNAPSHOT="$(ps -eo comm=,args= 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+ACTIVE_SERVICES=""
+declare -A ACTIVE_SERVICE_SET=()
+if has_cmd systemctl; then
+  ACTIVE_SERVICES="$(systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null \
+    | awk '{print $1}' | sed 's/\\.service$//' | tr '[:upper:]' '[:lower:]')"
+  while IFS= read -r s; do
+    [ -n "$s" ] && ACTIVE_SERVICE_SET["$s"]=1
+  done <<< "$ACTIVE_SERVICES"
+fi
+
 # ===== Candidate apps list (popular VPS stack) =====
 # format: display|process|service|binary_hint|package_hint
 CANDIDATES=(
-  "3x-ui|x-ui|x-ui|x-ui|"
+  # ===== Панели =====
   "xray|xray|xray|xray|xray"
-  "phobos|phobos|phobos|phobos|"
-  "amneziaWG|awg|amneziawg|awg|"
-  "naiveproxy|naive|naiveproxy|naive|naiveproxy"
-  "telemt|telemt|telemt|telemtd|"
-  "telemt-panel|telemt-panel|telemt-panel|telemt-panel|"
+  "3x-ui|x-ui|x-ui|x-ui|"
+  "x-ui|x-ui|x-ui|x-ui|"
   "marzban|marzban|marzban|marzban|"
   "hiddify|hiddify|hiddify-panel|hiddify|"
+  "s-ui|s-ui|s-ui|s-ui|"
+  "remnawave|remnawave|remnawave|remnawave|"
+  "v2board|v2board|v2board|v2board|"
+  "sspanel|sspanel|sspanel|sspanel|"
+  "telemt|telemt|telemt|telemtd|"
+  "telemt-panel|telemt-panel|telemt-panel|telemt-panel|"
+
+  # ===== Xray / V2Ray =====
+  "v2ray|v2ray|v2ray|v2ray|v2ray"
+  "xrayr|xrayr|xrayr|xrayr|"
+
+  # ===== Sing-box =====
   "sing-box|sing-box|sing-box|sing-box|sing-box"
+
+  # ===== Shadowsocks =====
+  "shadowsocks|ss-server|shadowsocks|ss-server|shadowsocks-libev"
+  "shadowsocks-rust|ssserver|shadowsocks-rust|ssserver|"
+  "shadowsocks-go|ssserver|shadowsocks-go|ssserver|"
+
+  # ===== Trojan =====
+  "trojan|trojan|trojan|trojan|"
+  "trojan-go|trojan-go|trojan-go|trojan-go|"
+
+  # ===== Hysteria =====
+  "hysteria|hysteria|hysteria-server|hysteria|"
+  "hysteria2|hysteria|hysteria-server|hysteria|"
+
+  # ===== TUIC =====
+  "tuic|tuic|tuic|tuic-server|"
+
+  # ===== NaiveProxy =====
+  "naiveproxy|naive|naiveproxy|naive|naiveproxy"
+
+  # ===== WireGuard / VPN =====
+  "wg-easy|wg-easy|wg-easy|wg-easy|"
+  "amneziaWG|awg|amneziawg|awg|"
   "openvpn|openvpn|openvpn|openvpn|openvpn"
+  "strongswan|charon|strongswan|ipsec|strongswan"
+  "softether|vpnserver|softether|vpnserver|"
+  "pptpd|pptpd|pptpd|pptpd|"
   "wireguard|wg|wg-quick@wg0|wg|wireguard-tools"
   "ocserv|ocserv|ocserv|ocserv|ocserv"
+
+  # ===== Mesh VPN =====
+  "tailscale|tailscaled|tailscaled|tailscale|tailscale"
   "headscale|headscale|headscale|headscale|headscale"
+
+  # ===== Прокси =====
+  "squid|squid|squid|squid|squid"
+  "tinyproxy|tinyproxy|tinyproxy|tinyproxy|tinyproxy"
+  "privoxy|privoxy|privoxy|privoxy|privoxy"
+
+  # ===== Web servers (часто маскируют VPN) =====
+  "nginx|nginx|nginx|nginx|nginx"
+  "apache|apache2|apache2|apache2|apache2"
+  "caddy|caddy|caddy|caddy|caddy"
+
+  # ===== Дополнительно =====
+  "docker|dockerd|docker|docker|docker"
+  "fail2ban|fail2ban-server|fail2ban|fail2ban-server|fail2ban"
 )
 
 INSTALLED_ROWS=()
 RESTARTABLE_SERVICES=()
+declare -A SEEN_SERVICES=()
 
 for item in "${CANDIDATES[@]}"; do
   IFS='|' read -r name proc svc bin pkg <<< "$item"
 
   detected=0
-  if [ -n "$bin" ] && has_cmd "$bin"; then detected=1; fi
+  proc_lc="$proc"
+  svc_lc="$svc"
+  bin_lc="$bin"
+
+  if [ -n "$bin_lc" ] && has_cmd "$bin_lc"; then detected=1; fi
   if [ "$detected" -eq 0 ] && is_proc_running "$proc"; then detected=1; fi
-  if [ "$detected" -eq 0 ] && is_service_running "$svc"; then detected=1; fi
-  if [ "$detected" -eq 0 ] && [ -n "$pkg" ] && get_pkg_version "$pkg" >/dev/null 2>&1; then detected=1; fi
+  if [ "$detected" -eq 0 ] && is_service_running "$svc_lc"; then detected=1; fi
 
   [ "$detected" -eq 0 ] && continue
 
   # status
-  if is_service_running "$svc" || is_proc_running "$proc"; then
+  if is_service_running "$svc_lc" || is_proc_running "$proc_lc"; then
     status="running"
     icon="${green}●${reset}"
     stat_color="$green"
@@ -155,18 +257,18 @@ for item in "${CANDIDATES[@]}"; do
 
   # version: package -> binary --version fallback
   version="-"
-  if [ -n "$pkg" ]; then
+  if [ -n "$bin_lc" ] && has_cmd "$bin_lc"; then
+    version="$($bin_lc --version 2>/dev/null | head -n1 | tr -s ' ')"
+  elif [ -n "$pkg" ]; then
     version="$(get_pkg_version "$pkg" 2>/dev/null || true)"
-  fi
-  if [ -z "$version" ] || [ "$version" = "-" ]; then
-    if [ -n "$bin" ] && has_cmd "$bin"; then
-      version="$($bin --version 2>/dev/null | head -n1 | tr -s ' ')"
-    fi
   fi
   [ -z "$version" ] && version="-"
 
-  INSTALLED_ROWS+=("$name|$status|$version|$icon|$stat_color|$svc")
-  RESTARTABLE_SERVICES+=("$svc")
+  INSTALLED_ROWS+=("$name|$status|$version|$icon|$stat_color|$svc_lc")
+  if [ -n "$svc_lc" ] && [ -z "${SEEN_SERVICES[$svc_lc]+x}" ]; then
+    RESTARTABLE_SERVICES+=("$svc_lc")
+    SEEN_SERVICES["$svc_lc"]=1
+  fi
 done
 
 # ===== Services table =====
@@ -265,3 +367,7 @@ menu() {
     esac
   done
 }
+
+if [ "$MODE" = "--menu" ] || [ "$MODE" = "menu" ]; then
+  menu
+fi
