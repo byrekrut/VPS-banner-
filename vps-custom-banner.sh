@@ -18,17 +18,21 @@ reset="\033[0m"
 
 clear
 
+# Collect all banner output first and print once at the end so the
+# login banner appears instantly as a single block.
+OUTPUT=""
+append_line() {
+  OUTPUT+="$1"$'\n'
+}
+
 # ===== Banner =====
-printf "%b" "${blue}"
-cat << 'EOF_BANNER'
-██╗   ██╗██████╗ ███████╗
-██║   ██║██╔══██╗██╔════╝
-██║   ██║██████╔╝███████╗
-╚██╗ ██╔╝██╔═══╝ ╚════██║
- ╚████╔╝ ██║     ███████║
-  ╚═══╝  ╚═╝     ╚══════╝
-EOF_BANNER
-printf "%b\n" "${reset}"
+append_line "${blue}██╗   ██╗██████╗ ███████╗"
+append_line "██║   ██║██╔══██╗██╔════╝"
+append_line "██║   ██║██████╔╝███████╗"
+append_line "╚██╗ ██╔╝██╔═══╝ ╚════██║"
+append_line " ╚████╔╝ ██║     ███████║"
+append_line "  ╚═══╝  ╚═╝     ╚══════╝${reset}"
+append_line ""
 
 # ===== Helpers =====
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -92,19 +96,18 @@ next_color() {
 }
 
 next_color
-printf "%b %-12s%b ${text}%s${reset}\n" "$ROW_COLOR" "Date:" "$reset" "$(date)"
+append_line "$(printf "%b %-12s%b ${text}%s${reset}" "$ROW_COLOR" "Date:" "$reset" "$(date)")"
 next_color
-printf "%b %-12s%b ${text}%s${reset}\n" "$ROW_COLOR" "Uptime:" "$reset" "$UPTIME"
+append_line "$(printf "%b %-12s%b ${text}%s${reset}" "$ROW_COLOR" "Uptime:" "$reset" "$UPTIME")"
 next_color
-printf "%b %-12s%b ${text}%s${reset}\n" "$ROW_COLOR" "LoadAvg:" "$reset" "$CPU_LOAD"
+append_line "$(printf "%b %-12s%b ${text}%s${reset}" "$ROW_COLOR" "LoadAvg:" "$reset" "$CPU_LOAD")"
 next_color
-printf "%b %-12s%b ${text}%s${reset}\n" "$ROW_COLOR" "Memory:" "$reset" "$MEM"
+append_line "$(printf "%b %-12s%b ${text}%s${reset}" "$ROW_COLOR" "Memory:" "$reset" "$MEM")"
 next_color
-printf "%b %-12s%b ${text}%s${reset}\n" "$ROW_COLOR" "Disk /:" "$reset" "$DISK"
+append_line "$(printf "%b %-12s%b ${text}%s${reset}" "$ROW_COLOR" "Disk /:" "$reset" "$DISK")"
 next_color
-printf "%b %-12s%b ${text}%s${reset}\n" "$ROW_COLOR" "Processes:" "$reset" "$PROCS"
-
-echo
+append_line "$(printf "%b %-12s%b ${text}%s${reset}" "$ROW_COLOR" "Processes:" "$reset" "$PROCS")"
+append_line ""
 
 # ===== Candidate apps list (popular VPS stack) =====
 # format: display|process|service|binary_hint|package_hint
@@ -173,22 +176,27 @@ LEN=${#TITLE}
 SIDE=$(( (WIDTH - LEN - 2) / 2 ))
 LEFT=$(printf "%${SIDE}s" "" | tr " " "─")
 RIGHT=$(printf "%$((WIDTH - LEN - SIDE - 2))s" "" | tr " " "─")
-printf "${line}%s %s %s${reset}\n\n" "$LEFT" "$TITLE" "$RIGHT"
-printf " ${orange}%-22s %-10s %s${reset}\n" "SERVICE" "STATUS" "VERSION"
+append_line "$(printf "${line}%s %s %s${reset}" "$LEFT" "$TITLE" "$RIGHT")"
+append_line ""
+append_line "$(printf " ${orange}%-22s %-10s %s${reset}" "SERVICE" "STATUS" "VERSION")"
 
 if [ "${#INSTALLED_ROWS[@]}" -eq 0 ]; then
-  printf " ${yellow}%s${reset}\n" "No known services from the VPS list were detected."
+  append_line "$(printf " ${yellow}%s${reset}" "No known services from the VPS list were detected.")"
 else
   for row in "${INSTALLED_ROWS[@]}"; do
     IFS='|' read -r name status version icon stat_color svc <<< "$row"
     next_color
-    printf "%b%b %b%-22s%b %b%-10s%b ${blue}%s${reset}\n" \
-      "$ROW_COLOR" "$icon" "$ROW_COLOR" "$name" "$reset" "$stat_color" "$status" "$reset" "$version"
+    append_line "$(printf "%b%b %b%-22s%b %b%-10s%b ${blue}%s${reset}" \
+      "$ROW_COLOR" "$icon" "$ROW_COLOR" "$name" "$reset" "$stat_color" "$status" "$reset" "$version")"
   done
 fi
 
-printf "\n${line}%${WIDTH}s${reset}\n" "" | tr " " "─"
-printf "${yellow}Type 'menu' to open VPS menu${reset}\n"
+append_line ""
+append_line "$(printf "${line}%${WIDTH}s${reset}" "" | tr " " "─")"
+append_line "${yellow}Type 'menu' to open VPS menu${reset}"
+
+# Print all banner text in one write.
+printf "%b" "$OUTPUT"
 
 menu() {
   while true; do
