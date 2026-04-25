@@ -1,15 +1,23 @@
-📜 VPS Banner Installer
+# 📜 VPS Banner Installer
 
-Безопасный установщик баннера для VPS, который добавляет сообщение при входе в систему через /etc/profile.d, не изменяя напрямую /etc/profile.
+Безопасный установщик баннера для VPS, который добавляет сообщение при входе в систему через `/etc/profile.d`, **не изменяя напрямую `/etc/profile`**.
 
-✨ Особенности
-✅ Не изменяет /etc/profile
-✅ Использует /etc/profile.d
-✅ Безопасное обновление через маркеры
-✅ Не перезаписывает чужие файлы
-✅ Поддержка --force
-✅ Показывает баннер только в интерактивных сессиях
-🚀 Установка (одной командой)
+---
+
+## ✨ Особенности
+
+- Не изменяет `/etc/profile`
+- Использует `/etc/profile.d`
+- Безопасное обновление через маркеры
+- Не перезаписывает чужие файлы
+- Поддержка `--force`
+- Показывает баннер только в интерактивных сессиях
+
+---
+
+## 🚀 Установка (одной командой)
+
+```bash
 sudo bash <(curl -fsSL https://raw.githubusercontent.com/your-repo/install_vps_banner.sh)
 🔥 Переустановка (force)
 sudo bash <(curl -fsSL https://raw.githubusercontent.com/your-repo/install_vps_banner.sh) --force
@@ -30,10 +38,10 @@ sudo ./install_vps_banner.sh --force
 
 Скрипт:
 
-❗ Требует запуск от root
-❗ Работает только с /etc/profile.d/*.sh
-❗ Не перезапишет файл без своих маркеров
-✔ Удаляет только свой блок:
+Требует запуск от root
+Работает только с /etc/profile.d/*.sh
+Не перезапишет файл без своих маркеров
+Удаляет только свой блок:
 # >>> vps-banner >>>
 ...
 # <<< vps-banner <<<
@@ -71,9 +79,3 @@ cron
 non-interactive shell
 
 Это сделано специально, чтобы не ломать автоматизацию.
-
-💡 Советы
-
-Перед запуском можно посмотреть код:
-
-curl -fsSL https://raw.githubusercontent.com/your-repo/install_vps_banner.sh | less
